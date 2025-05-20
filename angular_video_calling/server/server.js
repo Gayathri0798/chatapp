@@ -149,5 +149,5 @@ io.on('connection', socket => {
 // ==========================
 
 server.listen(3000, () => {
-  console.log('🚀 HTTPS server running at https://localhost:443');
+  console.log('🚀 HTTPS server running at https://localhost:3000');
 });
