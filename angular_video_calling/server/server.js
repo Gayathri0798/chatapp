@@ -1,18 +1,20 @@
 import express from 'express';
 import mysql from 'mysql2';
 import cors from 'cors';
-import { createServer } from 'http';
+import { createServer } from 'https';
 import { Server } from 'socket.io';
 import bodyParser from 'body-parser';
 import fs from 'fs';
-import https from 'https';
 
 const app = express();
+
 const options = {
-  key: fs.readFileSync('cert/server.key'),
-  cert: fs.readFileSync('cert/server.cert')
+  key: fs.readFileSync('./ssl/key.pem'),
+  cert: fs.readFileSync('./ssl/cert.pem')
 };
-const server = createServer(options,app);
+
+const server = createServer(options, app);
+
 const io = new Server(server, {
   cors: {
     origin: 'http://localhost:4200',
@@ -22,8 +24,11 @@ const io = new Server(server, {
 
 app.use(cors());
 app.use(bodyParser.json());
+app.use(express.static('public')); // Optional: serve static frontend
 
+// ==========================
 // MySQL connection
+// ==========================
 const db = mysql.createConnection({
   host: 'localhost',
   user: 'root',
@@ -40,7 +45,6 @@ db.connect(err => {
 // REST APIs
 // ==========================
 
-// Register API
 app.post('/register', (req, res) => {
   const { username, password } = req.body;
   const sql = 'INSERT INTO users (username, password) VALUES (?, ?)';
@@ -50,7 +54,6 @@ app.post('/register', (req, res) => {
   });
 });
 
-// Login API
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
   const sql = 'SELECT id, username FROM users WHERE username = ? AND password = ?';
@@ -64,7 +67,6 @@ app.post('/api/login', (req, res) => {
   });
 });
 
-// Get all users except current user
 app.get('/api/users/:id', (req, res) => {
   const userId = parseInt(req.params.id, 10);
   const sql = 'SELECT id, username FROM users WHERE id != ?';
@@ -75,98 +77,77 @@ app.get('/api/users/:id', (req, res) => {
 });
 
 // ==========================
-// Socket.IO handling
+// Socket.IO - WebRTC Signaling + Call Logic
 // ==========================
 
-const connectedUsers = {}; // Maps userId => socketId
+const connectedUsers = {}; // Map: userId => socket.id
 
-// io.on('connection', (socket) => {
-//   console.log(`🔌 Socket connected: ${socket.id}`);
-
-//   // Register user after login
-//   socket.on('register-user', (userId) => {
-//     connectedUsers[userId] = socket.id;
-//     console.log(`✅ User ${userId} registered with socket ${socket.id}`);
-//   });
-
-//   // Call request (video/audio)
-//   socket.on('call-user', ({ fromUserId, toUserId, type }) => {
-//     const toSocketId = connectedUsers[toUserId];
-//     if (toSocketId) {
-//       io.to(toSocketId).emit('call-notification', { fromUserId, type });
-//       console.log(`📞 Call notification sent from ${fromUserId} to ${toUserId}`);
-//     } else {
-//       console.log(`⚠️ User ${toUserId} not connected`);
-//     }
-//   });
-
-//   // Start video call
-//   socket.on('start-video-call', ({ fromUserId, toUserId }) => {
-//     const toSocketId = connectedUsers[toUserId];
-//     const fromSocketId = connectedUsers[fromUserId];
-
-//     if (toSocketId) {
-//       io.to(toSocketId).emit('incoming-video-call', { fromUserId });
-//       console.log(`📹 Incoming call from ${fromUserId} to ${toUserId}`);
-//     } else {
-//       console.log(`⚠️ Callee ${toUserId} not connected`);
-//     }
-
-//     if (fromSocketId) {
-//       io.to(fromSocketId).emit('video-call-started', { toUserId });
-//     }
-//   });
-
-//   // Signaling messages (WebRTC)
-//   socket.on('signal', ({ toUserId, data }) => {
-//     const toSocketId = connectedUsers[toUserId];
-//     if (toSocketId) {
-//       io.to(toSocketId).emit('signal', data);
-//     }
-//   });
-
-//   // End call
-//   socket.on('end-call', (toUserId) => {
-//     const toSocketId = connectedUsers[toUserId];
-//     if (toSocketId) {
-//       io.to(toSocketId).emit('call-ended');
-//     }
-//   });
-
-//   // Handle disconnect
-//   socket.on('disconnect', () => {
-//     const userId = Object.keys(connectedUsers).find(
-//       key => connectedUsers[key] === socket.id
-//     );
-//     if (userId) {
-//       delete connectedUsers[userId];
-//       console.log(`❌ User ${userId} disconnected`);
-//     } else {
-//       console.log(`❌ Unknown socket disconnected: ${socket.id}`);
-//     }
-//   });
-// });
 io.on('connection', socket => {
+  console.log(`🔌 New socket connected: ${socket.id}`);
+
+  socket.on('register-user', userId => {
+    connectedUsers[userId] = socket.id;
+    console.log(`✅ Registered user ${userId} with socket ${socket.id}`);
+  });
+
+  socket.on('call-user', ({ fromUserId, toUserId, type }) => {
+    const toSocketId = connectedUsers[toUserId];
+    if (toSocketId) {
+      io.to(toSocketId).emit('call-notification', { fromUserId, type });
+    }
+  });
+
+  socket.on('start-video-call', ({ fromUserId, toUserId }) => {
+    const toSocketId = connectedUsers[toUserId];
+    if (toSocketId) {
+      io.to(toSocketId).emit('incoming-video-call', { fromUserId });
+    }
+  });
+
+  // WebRTC signaling
   socket.on('offer', ({ toUserId, offer }) => {
-    io.to(toUserId).emit('offer', { fromUserId: socket.id, offer });
+    const toSocketId = connectedUsers[toUserId];
+    if (toSocketId) {
+      io.to(toSocketId).emit('offer', { fromUserId: socket.id, offer });
+    }
   });
 
   socket.on('answer', ({ toUserId, answer }) => {
-    io.to(toUserId).emit('answer', answer);
+    const toSocketId = connectedUsers[toUserId];
+    if (toSocketId) {
+      io.to(toSocketId).emit('answer', { fromUserId: socket.id, answer });
+    }
   });
 
   socket.on('candidate', ({ toUserId, candidate }) => {
-    io.to(toUserId).emit('candidate', candidate);
+    const toSocketId = connectedUsers[toUserId];
+    if (toSocketId) {
+      io.to(toSocketId).emit('candidate', { fromUserId: socket.id, candidate });
+    }
   });
 
-  socket.on('response', ({ toUserId, response }) => {
-    io.to(toUserId).emit('response', { fromUserId: socket.id, response });
+  socket.on('end-call', toUserId => {
+    const toSocketId = connectedUsers[toUserId];
+    if (toSocketId) {
+      io.to(toSocketId).emit('call-ended');
+    }
   });
 
-  // Store user socket.id mapping logic as needed
+  socket.on('disconnect', () => {
+    const userId = Object.keys(connectedUsers).find(id => connectedUsers[id] === socket.id);
+    if (userId) {
+      delete connectedUsers[userId];
+      console.log(`❌ User ${userId} disconnected`);
+    } else {
+      console.log(`❌ Unknown socket disconnected: ${socket.id}`);
+    }
+  });
 });
 
+// ==========================
+// Start Server
+// ==========================
 
 server.listen(3000, () => {
-  console.log('🚀 Server running on http://localhost:3000');
+  console.log('🚀 HTTPS server running at https://localhost:3000');
 });
