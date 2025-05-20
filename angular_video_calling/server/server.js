@@ -11,7 +11,7 @@ const app = express();
 const options = {
   key: fs.readFileSync('./ssl/key.pem'),
   cert: fs.readFileSync('./ssl/cert.pem')
-};
+}; 
 
 const server = createServer(options, app);
 
