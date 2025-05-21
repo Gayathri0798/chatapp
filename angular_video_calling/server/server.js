@@ -149,74 +149,64 @@ app.get('/api/users/:id', (req, res) => {
 // Socket.IO - WebRTC Signaling + Call Logic
 // ==========================
 
-const connectedUsers = {}; // Map: userId => socket.id
-
-io.on('connection', socket => {
-  console.log(`🔌 New socket connected: ${socket.id}`);
-
-  socket.on('register-user', userId => {
-    connectedUsers[userId] = socket.id;
-    console.log(`✅ Registered user ${userId} with socket ${socket.id}`);
+let users = {};
+ 
+// When a client connects
+io.on('connection', (socket) => {
+  console.log('A user connected:', socket.id);
+ 
+  // Register the user by storing their socket ID
+  socket.on('register', (userId) => {
+    users[userId] = socket.id;
+    socket.userId = userId;
+    console.log(`${userId} registered with socket ID: ${socket.id}`);
   });
-
-  socket.on('call-user', ({ fromUserId, toUserId, type }) => {
-    const toSocketId = connectedUsers[toUserId];
-    if (toSocketId) {
-      io.to(toSocketId).emit('call-notification', { fromUserId, type });
-    }
-  });
-
-  socket.on('start-video-call', ({ fromUserId, toUserId }) => {
-    const toSocketId = connectedUsers[toUserId];
-    if (toSocketId) {
-      io.to(toSocketId).emit('incoming-video-call', { fromUserId });
-    }
-  });
-
-  // WebRTC signaling
-  socket.on('offer', ({ toUserId, offer }) => {
-    const toSocketId = connectedUsers[toUserId];
-    if (toSocketId) {
-      io.to(toSocketId).emit('offer', { fromUserId: socket.id, offer });
-    }
-  });
-
-  socket.on('answer', ({ toUserId, answer }) => {
-    const toSocketId = connectedUsers[toUserId];
-    if (toSocketId) {
-      io.to(toSocketId).emit('answer', { fromUserId: socket.id, answer });
-    }
-  });
-
-  socket.on('candidate', ({ toUserId, candidate }) => {
-    const toSocketId = connectedUsers[toUserId];
-    if (toSocketId) {
-      io.to(toSocketId).emit('candidate', { fromUserId: socket.id, candidate });
-    }
-  });
-
-  socket.on('end-call', toUserId => {
-    const toSocketId = connectedUsers[toUserId];
-    if (toSocketId) {
-      io.to(toSocketId).emit('call-ended');
-    }
-  });
-
-  socket.on('disconnect', () => {
-    const userId = Object.keys(connectedUsers).find(id => connectedUsers[id] === socket.id);
-    if (userId) {
-      delete connectedUsers[userId];
-      console.log(`❌ User ${userId} disconnected`);
+ 
+  socket.on('offer', (data) => {
+    const { sdp, type, targetId } = data;  // Destructure 'sdp', 'type' and 'targetId'
+    const targetSocketId = users[targetId];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('offer', { sdp, type, senderId: socket.id });  // Emit sdp, type, and senderId
     } else {
-      console.log(`❌ Unknown socket disconnected: ${socket.id}`);
+      console.log('User not found:', targetId);
+    }
+  });
+ 
+  // Handle receiving an answer (from User B)
+  socket.on('answer', (data) => {
+    const { answer, targetId } = data;
+    const targetSocketId = users[targetId];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('answer', { answer, senderId: socket.id });
+    } else {
+      console.log('User not found:', targetId);
+    }
+  });
+ 
+  // Handle ICE candidates
+  socket.on('ice-candidate', (data) => {
+    const { candidate, targetId } = data;
+    const targetSocketId = users[targetId];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('ice-candidate', candidate);
+    } else {
+      console.log('User not found:', targetId);
+    }
+  });
+ 
+  // Handle user disconnection
+  socket.on('disconnect', () => {
+    for (const [userId, socketId] of Object.entries(users)) {
+      if (socketId === socket.id) {
+        delete users[userId];
+        console.log(`${userId} disconnected`);
+        break;
+      }
     }
   });
 });
-
-// ==========================
-// Start Server
-// ==========================
-
+ 
+// Start server on port 3000
 server.listen(3000, () => {
-  console.log('🚀 HTTPS server running at https://localhost:3000');
+  console.log('Signaling server is running on http://localhost:3000');
 });
